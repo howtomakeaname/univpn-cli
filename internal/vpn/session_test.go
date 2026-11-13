@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"hvp-test/internal/wire"
+	"github.com/howtomakeaname/univpn-cli/internal/wire"
 )
 
 func TestMFALogin(t *testing.T) {

@@ -12,9 +12,9 @@ import (
 	"strconv"
 	"strings"
 
-	"hvp-test/internal/netstack"
-	"hvp-test/internal/vpn"
-	"hvp-test/internal/wire"
+	"github.com/howtomakeaname/univpn-cli/internal/netstack"
+	"github.com/howtomakeaname/univpn-cli/internal/vpn"
+	"github.com/howtomakeaname/univpn-cli/internal/wire"
 )
 
 type Config struct {

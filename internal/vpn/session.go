@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"hvp-test/internal/wire"
+	"github.com/howtomakeaname/univpn-cli/internal/wire"
 )
 
 type Options struct {

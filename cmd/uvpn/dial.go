@@ -21,7 +21,7 @@ func dialProxy(args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: hvp dial [-proxy 127.0.0.1:7890] host:port")
+		return errors.New("usage: uvpn dial [-proxy 127.0.0.1:7890] host:port")
 	}
 	host, portText, err := net.SplitHostPort(fs.Arg(0))
 	if err != nil {

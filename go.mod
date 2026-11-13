@@ -1,4 +1,4 @@
-module hvp-test
+module github.com/howtomakeaname/univpn-cli
 
 go 1.24.4
 

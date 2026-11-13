@@ -17,37 +17,37 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/howtomakeaname/univpn-cli/internal/config"
+	"github.com/howtomakeaname/univpn-cli/internal/netstack"
+	"github.com/howtomakeaname/univpn-cli/internal/proxy"
+	"github.com/howtomakeaname/univpn-cli/internal/vpn"
 	"golang.org/x/term"
-	"hvp-test/internal/config"
-	"hvp-test/internal/netstack"
-	"hvp-test/internal/proxy"
-	"hvp-test/internal/vpn"
 )
 
 func main() {
 	if err := run(); err != nil && !errors.Is(err, context.Canceled) {
-		fmt.Fprintln(os.Stderr, "hvp:", err)
+		fmt.Fprintln(os.Stderr, "uvpn:", err)
 		os.Exit(1)
 	}
 }
 
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: hvp <connect|probe|inspect-cert|version> -config FILE")
+		return errors.New("usage: uvpn <connect|probe|inspect-cert|version> -config FILE")
 	}
 	command := os.Args[1]
 	if command == "dial" {
 		return dialProxy(os.Args[2:])
 	}
 	if command == "version" {
-		fmt.Println("hvp 0.1.0 experimental (UniVPN v1 / IPv4 / TLS)")
+		fmt.Println("uvpn 0.1.0 experimental (UniVPN v1 / IPv4 / TLS)")
 		return nil
 	}
 	if command != "connect" && command != "probe" && command != "inspect-cert" {
 		return errors.New("unknown command; use connect, probe, inspect-cert or version")
 	}
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
-	file := fs.String("config", "hvp.local.json", "JSON configuration")
+	file := fs.String("config", "uvpn.local.json", "JSON configuration")
 	passwordStdin := fs.Bool("password-stdin", false, "read VPN password from stdin (one line)")
 	otpStdin := fs.Bool("otp-stdin", false, "read requested verification code from stdin (one line)")
 	if err := fs.Parse(os.Args[2:]); err != nil {
