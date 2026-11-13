@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"net/netip"
@@ -116,6 +117,67 @@ func TestUDPAssociateDatagramsAndControlLifetime(t *testing.T) {
 			t.Fatal("UDP relay survived TCP control closure")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A zero-port request learns its source from the first valid datagram. Once
+// learned, a different local socket must neither inject into an existing flow
+// nor open another destination through that association.
+func TestUDPZeroPortAssociationPinsFirstSource(t *testing.T) {
+	echo := startUDPEcho(t)
+	var dialed atomic.Int32
+	proxyAddress := startProxy(t, func(ctx context.Context, network, address string) (net.Conn, error) {
+		dialed.Add(1)
+		return (&net.Dialer{}).DialContext(ctx, network, echo.LocalAddr().String())
+	})
+	_, relay := startUDPAssociation(t, proxyAddress, 0)
+	client, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	intruder, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer intruder.Close()
+	send := func(c *net.UDPConn, port uint16, payload string) {
+		t.Helper()
+		packet := binary.BigEndian.AppendUint16([]byte{0, 0, 0, 1, 10, 44, 0, 2}, port)
+		packet = append(packet, payload...)
+		if _, err := c.WriteToUDP(packet, relay); err != nil {
+			t.Fatal(err)
+		}
+	}
+	receive := func(want string) {
+		t.Helper()
+		client.SetReadDeadline(time.Now().Add(time.Second))
+		var packet [100]byte
+		n, _, err := client.ReadFromUDP(packet[:])
+		_, payload, parseErr := parseUDPDatagram(packet[:n])
+		if err != nil || parseErr != nil || string(payload) != want {
+			t.Fatalf("source binding response=%q read=%v parse=%v", payload, err, parseErr)
+		}
+	}
+	send(client, 53, "bind-first-source")
+	receive("bind-first-source")
+	send(intruder, 53, "inject-existing-flow")
+	send(intruder, 54, "inject-new-flow")
+	for _, c := range []*net.UDPConn{client, intruder} {
+		c.SetReadDeadline(time.Now().Add(75 * time.Millisecond))
+		if _, _, err := c.ReadFromUDP(make([]byte, 100)); err == nil {
+			t.Fatal("another source port injected a UDP packet")
+		} else {
+			var timeout net.Error
+			if !errors.As(err, &timeout) || !timeout.Timeout() {
+				t.Fatal(err)
+			}
+		}
+	}
+	send(client, 53, "original-source-still-works")
+	receive("original-source-still-works")
+	if dialed.Load() != 1 {
+		t.Fatalf("untrusted source opened another UDP flow: %d", dialed.Load())
 	}
 }
 
