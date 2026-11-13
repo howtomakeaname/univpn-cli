@@ -5,5 +5,6 @@
   "allow_cidrs": ["10.20.30.40/32"],
   "hosts": {"atlas.internal": "10.20.30.40"},
   "mtu": 1400,
-  "max_connections": 256
+  "max_connections": 256,
+  "session_max_seconds": 0
 }

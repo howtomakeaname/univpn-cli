@@ -11,13 +11,18 @@ A Go CLI for UniVPN SSL VPN, with local **SOCKS5 and HTTP proxies**.
 ## Features
 
 - Password authentication with interactive SMS/email MFA.
-- A mixed SOCKS5 / HTTP / HTTPS CONNECT listener for SSH, browsers and command-line tools.
+- A mixed SOCKS5 / HTTP / HTTPS CONNECT listener, including SOCKS5 UDP ASSOCIATE.
 - Rootless IPv4 networking with the gVisor TCP/IP stack. No system TUN device or route changes.
 - Verified TLS on both VPN channels, private CA support, and explicit certificate pinning.
 - Explicit destination CIDRs, VPN-side name resolution, bounded queues and independent keepalives.
 - A single executable: `uvpn`, including an SSH `ProxyCommand` helper.
+- Explicit, bounded reconnect with fresh authentication; gateway revocation and unsupported security policies close the tunnel.
 
 **Experimental:** compatibility is currently limited to the tested UniVPN v1 IPv4-over-TLS profile. See [scope](docs/protocol.md) and [validation](docs/validation.md). This is an independent project, not an official vendor client.
+
+![Control and data paths through the local proxy, destination policy, gVisor and verified TLS channels](docs/assets/traffic-flow.png)
+
+SOCKS5 TCP and UDP share the same destination policy and user-space network stack. Both travel inside the TLS data channel; HTTP proxy traffic uses TCP.
 
 ## Install
 
@@ -74,11 +79,29 @@ Names resolve through `hosts` or an explicitly configured VPN DNS server. Target
 
 Passwords and session tokens are not logged or exported. Unix users may set `password_file` to a private file with mode `0600`; Windows users should use the interactive prompt or `--password-stdin`. `--otp-stdin` reads a code only when requested by the gateway. See the [Chinese usage guide](README.zh-CN.md) for automation and spreadsheet import.
 
+UDP applications must support SOCKS5 UDP ASSOCIATE; an HTTP proxy cannot forward UDP. Keep its SOCKS TCP control connection open. Each association permits 32 destination flows, binds its client source, and expires idle resources. SOCKS fragmentation is unsupported; ordinary IPv4 fragmentation is handled inside the VPN stack.
+
+## Sessions and MFA
+
+![Session setup, resource cleanup and explicitly enabled fresh-authentication reconnect](docs/assets/session-lifecycle.png)
+
+By default, a session interruption closes the proxy and exits. To permit up to three fresh login attempts after a network interruption, re-authentication request or local session limit:
+
+```sh
+uvpn connect -config uvpn.local.json -reconnect-attempts 3
+```
+
+The old listener, UDP associations, network stack and both channels close before a retry. Backoff is bounded; a rejected login, revoked session, invalid certificate or unsupported endpoint policy stops retries. Existing application connections are not resumed.
+
+`session_max_seconds` optionally caps local session use (`0` disables the cap; otherwise `60..604800`). It does not extend the gateway's validity period. Keepalives detect connectivity; they are not token renewal.
+
+**MFA is not persisted.** One-time codes are cleared after use, and session tokens stay in process memory and are cleared on shutdown. Every new login follows the gateway's authentication requirements. There is no implemented remember-device or cross-process token-resumption option; storing an SMS code would not provide either.
+
 ## Scope
 
-Supported: SOCKS5 CONNECT, ordinary HTTP and HTTP CONNECT over IPv4/TLS. Session failures close both VPN channels and require a new login.
+Supported: SOCKS5 CONNECT and UDP ASSOCIATE, ordinary HTTP and HTTP CONNECT over IPv4/TLS; explicit fresh-login reconnect; endpoint-policy detection and refusal when required checks cannot be completed.
 
-Not implemented: SOCKS UDP ASSOCIATE, IPv6, UDP/DTLS tunnels, IPsec, browser SSO, client-certificate login, endpoint compliance plugins, password changes or transparent reconnect. Ordinary HTTP proxy requests use separate connections; use CONNECT for streaming upgrades. TCP-over-TCP performance depends on network conditions.
+Not implemented: outer encrypted UDP/DTLS tunnels, legacy HTTP-authenticated VPN sessions, IPv6, IPsec, browser SSO, client-certificate login, endpoint compliance plugins, password changes, transparent connection migration or persistent MFA trust. A gateway requiring unsupported checks needs its official security components; the CLI never reports those checks as passed. Ordinary HTTP proxy requests use separate connections; use CONNECT for streaming upgrades. TCP-over-TCP performance depends on network conditions.
 
 ## Build and test
 
