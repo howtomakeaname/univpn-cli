@@ -19,19 +19,20 @@ import (
 )
 
 type Config struct {
-	Gateway        string            `json:"gateway"`
-	Domain         string            `json:"domain,omitempty"`
-	Username       string            `json:"username,omitempty"`
-	PasswordFile   string            `json:"password_file,omitempty"`
-	ServerName     string            `json:"server_name,omitempty"`
-	CAFile         string            `json:"ca_file,omitempty"`
-	CertSHA256     string            `json:"cert_sha256,omitempty"`
-	Listen         string            `json:"listen"`
-	AllowCIDRs     []string          `json:"allow_cidrs"`
-	Hosts          map[string]string `json:"hosts,omitempty"`
-	DNS            []string          `json:"dns,omitempty"`
-	MTU            int               `json:"mtu,omitempty"`
-	MaxConnections int               `json:"max_connections,omitempty"`
+	Gateway           string            `json:"gateway"`
+	Domain            string            `json:"domain,omitempty"`
+	Username          string            `json:"username,omitempty"`
+	PasswordFile      string            `json:"password_file,omitempty"`
+	ServerName        string            `json:"server_name,omitempty"`
+	CAFile            string            `json:"ca_file,omitempty"`
+	CertSHA256        string            `json:"cert_sha256,omitempty"`
+	Listen            string            `json:"listen"`
+	AllowCIDRs        []string          `json:"allow_cidrs"`
+	Hosts             map[string]string `json:"hosts,omitempty"`
+	DNS               []string          `json:"dns,omitempty"`
+	MTU               int               `json:"mtu,omitempty"`
+	MaxConnections    int               `json:"max_connections,omitempty"`
+	SessionMaxSeconds int               `json:"session_max_seconds,omitempty"`
 }
 
 func Load(path string) (Config, error) {
@@ -88,6 +89,9 @@ func Load(path string) (Config, error) {
 	}
 	if c.MaxConnections < 1 || c.MaxConnections > 4096 {
 		return c, errors.New("max_connections must be 1..4096")
+	}
+	if c.SessionMaxSeconds != 0 && (c.SessionMaxSeconds < 60 || c.SessionMaxSeconds > 604800) {
+		return c, errors.New("session_max_seconds must be 0 or 60..604800; it limits local use, not gateway expiry")
 	}
 	if _, err = c.Policy(nil); err != nil {
 		return c, err

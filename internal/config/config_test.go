@@ -33,6 +33,10 @@ func TestConfigValidation(t *testing.T) {
 		ok         bool
 	}{
 		{"valid", base, true},
+		{"local session limit", strings.Replace(base, `"gateway"`, `"session_max_seconds":3600,"gateway"`, 1), true},
+		{"short session limit", strings.Replace(base, `"gateway"`, `"session_max_seconds":59,"gateway"`, 1), false},
+		{"negative session limit", strings.Replace(base, `"gateway"`, `"session_max_seconds":-1,"gateway"`, 1), false},
+		{"excessive session limit", strings.Replace(base, `"gateway"`, `"session_max_seconds":604801,"gateway"`, 1), false},
 		{"public listener", strings.Replace(base, "127.0.0.1", "0.0.0.0", 1), false},
 		{"missing policy", strings.Replace(base, `["10.44.0.2/32"]`, `[]`, 1), false},
 		{"unknown key", strings.Replace(base, `"gateway"`, `"password":"unsafe","gateway"`, 1), false},
