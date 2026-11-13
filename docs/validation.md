@@ -89,6 +89,39 @@ do not isolate the cause or establish whether the variation is client- or
 path-related. The HTTP patch does not change the SOCKS5 data path. No vendor-client
 performance comparison was performed.
 
+### Interleaved follow-up
+
+Later on the same day, the still-running earlier development build (`5e63c0f`,
+before v0.2.0) and the downloaded v0.2.1 release were tested in alternating order:
+earlier 1, v0.2.1 1, earlier 2, v0.2.1 2, earlier 3, v0.2.1 3. Each transfer used
+the same allocated host, SSH settings, 64 MiB in-memory payload per direction and
+SHA-256 verification. Both binaries used Go 1.27.4 and the same dependencies;
+their configurations differed only in the loopback listener. The two existing
+authenticated VPN sessions remained separate, so session and path effects were
+not eliminated.
+
+| Build / round | Upload | Download |
+| --- | --- | --- |
+| Earlier development build, 1 | 6.12 MiB/s | 14.42 MiB/s |
+| v0.2.1, 1 | 7.17 MiB/s | 12.46 MiB/s |
+| Earlier development build, 2 | 10.56 MiB/s | 11.31 MiB/s |
+| v0.2.1, 2 | 12.14 MiB/s | 14.05 MiB/s |
+| Earlier development build, 3 | 10.51 MiB/s | 11.27 MiB/s |
+| v0.2.1, 3 | 12.15 MiB/s | 14.76 MiB/s |
+
+All six transfers passed both checksums. Samples of the outer VPN TCP data
+connections showed first-round congestion windows growing from 5 to 226 segments
+for the earlier build and 8 to 235 for v0.2.1. Subsequent rounds began with larger
+windows. The earlier session had no additional retransmitted bytes across these
+runs; v0.2.1 had none in rounds 1 and 3, and one 90-byte retransmission in round 2.
+
+This follow-up did not reproduce a consistent throughput regression. The first
+round's smaller congestion windows are consistent with ramp-up affecting these
+short transfers, but comparable TCP samples were not collected during the original
+slow runs, so their cause remains unresolved. The v0.2.1 HTTP header patch leaves
+the SOCKS5/SSH forwarding path unchanged. These results do not establish a causal
+speed improvement between versions either.
+
 The live UDP echo run sent 8192 datagrams of 1200 payload bytes with a window of 64.
 All 8192 returned intact, with zero observed loss, in 2.936 seconds: **3.193 MiB/s
 echo payload goodput**. This counts each returned payload once, includes round-trip
