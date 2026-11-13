@@ -1,0 +1,9 @@
+{
+  "gateway": "vpn.example.com:443",
+  "username": "YOUR_VPN_USERNAME",
+  "listen": "127.0.0.1:7890",
+  "allow_cidrs": ["10.20.30.40/32"],
+  "hosts": {"atlas.internal": "10.20.30.40"},
+  "mtu": 1400,
+  "max_connections": 256
+}
