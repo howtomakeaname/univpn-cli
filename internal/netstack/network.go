@@ -1,4 +1,4 @@
-// Package netstack exposes TCP sockets backed exclusively by VPN IP packets.
+// Package netstack exposes TCP and UDP sockets backed exclusively by VPN IP packets.
 package netstack
 
 import (
@@ -94,6 +94,19 @@ func (n *Network) DialIP(ctx context.Context, ip netip.Addr, port uint16) (net.C
 	return gonet.DialContextTCP(ctx, n.Stack, tcpip.FullAddress{NIC: 1, Addr: tcpip.AddrFromSlice(ip.AsSlice()), Port: port}, ipv4.ProtocolNumber)
 }
 
+// DialUDPIP creates a connected UDP endpoint inside the VPN stack. The connection
+// keeps datagram boundaries and only receives packets from the chosen peer.
+func (n *Network) DialUDPIP(ctx context.Context, ip netip.Addr, port uint16) (net.Conn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !ip.Is4() {
+		return nil, errors.New("only IPv4 VPN destinations are supported")
+	}
+	addr := tcpip.FullAddress{NIC: 1, Addr: tcpip.AddrFromSlice(ip.AsSlice()), Port: port}
+	return gonet.DialUDP(n.Stack, nil, &addr, ipv4.ProtocolNumber)
+}
+
 // Policy resolves names without consulting host DNS, then checks EVERY final IP.
 type Policy struct {
 	Net   *Network
@@ -116,8 +129,8 @@ func (p *Policy) Allowed(ip netip.Addr) bool {
 }
 
 func (p *Policy) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	if network != "tcp" && network != "tcp4" {
-		return nil, errors.New("proxy supports TCP only")
+	if network != "tcp" && network != "tcp4" && network != "udp" && network != "udp4" {
+		return nil, errors.New("proxy supports IPv4 TCP and UDP only")
 	}
 	host, portText, err := net.SplitHostPort(address)
 	if err != nil {
@@ -174,7 +187,13 @@ func (p *Policy) DialContext(ctx context.Context, network, address string) (net.
 		}
 	}
 	for _, ip := range ips {
-		c, e := p.Net.DialIP(ctx, ip, uint16(port))
+		var c net.Conn
+		var e error
+		if strings.HasPrefix(network, "udp") {
+			c, e = p.Net.DialUDPIP(ctx, ip, uint16(port))
+		} else {
+			c, e = p.Net.DialIP(ctx, ip, uint16(port))
+		}
 		if e == nil {
 			return c, nil
 		}

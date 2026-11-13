@@ -104,11 +104,84 @@ func TestNoDirectFallbackAndPolicy(t *testing.T) {
 			t.Fatal("allowed", ip)
 		}
 	}
-	for _, target := range []string{"8.8.8.8:443", "localhost:80", "unconfigured.internal:22", "[::1]:80", "10.0.0.2:0", "10.0.0.2:70000"} {
-		// A nil network proves every rejected target stops before any dial.
-		if _, err := p.DialContext(context.Background(), "tcp", target); err == nil {
-			t.Fatal("accepted", target)
+	for _, network := range []string{"tcp", "udp"} {
+		for _, target := range []string{"8.8.8.8:443", "localhost:80", "unconfigured.internal:22", "[::1]:80", "10.0.0.2:0", "10.0.0.2:70000"} {
+			// A nil network proves every rejected target stops before any dial.
+			if _, err := p.DialContext(context.Background(), network, target); err == nil {
+				t.Fatal("accepted", network, target)
+			}
 		}
+	}
+}
+
+func TestUDPDatagramsUseVPNStack(t *testing.T) {
+	a, err := New(netip.MustParseAddr("10.44.0.1"), 1400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	b, err := New(netip.MustParseAddr("10.44.0.2"), 1400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var pumps sync.WaitGroup
+	for _, pair := range [][2]*Network{{a, b}, {b, a}} {
+		pumps.Add(1)
+		go func(src, dst *Network) {
+			defer pumps.Done()
+			for {
+				packet, e := src.Receive(ctx)
+				if e != nil {
+					return
+				}
+				if e = dst.Inject(packet); e != nil {
+					return
+				}
+			}
+		}(pair[0], pair[1])
+	}
+	defer func() { cancel(); pumps.Wait() }()
+	l, err := gonet.DialUDP(b.Stack, &tcpip.FullAddress{NIC: 1, Addr: tcpip.AddrFromSlice(b.IP.AsSlice()), Port: 5353}, nil, ipv4.ProtocolNumber)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go func() {
+		var buf [65535]byte
+		for {
+			n, addr, e := l.ReadFrom(buf[:])
+			if e != nil {
+				return
+			}
+			l.WriteTo(buf[:n], addr)
+		}
+	}()
+	p := Policy{Net: a, Allow: []netip.Prefix{netip.MustParsePrefix("10.44.0.2/32")}, Hosts: map[string]netip.Addr{"dns.internal": b.IP}}
+	c, err := p.DialContext(ctx, "udp", "dns.internal:5353")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(3 * time.Second))
+	// The large datagram crosses the link MTU and exercises IP reassembly.
+	for _, size := range []int{0, 1, 4096} {
+		payload := bytes.Repeat([]byte{byte(size + 1)}, size)
+		if n, e := c.Write(payload); e != nil || n != len(payload) {
+			t.Fatal("write", n, e)
+		}
+		buf := make([]byte, 8192)
+		n, e := c.Read(buf)
+		if e != nil || !bytes.Equal(buf[:n], payload) {
+			t.Fatal("datagram mismatch", size, n, e)
+		}
+	}
+	canceled, stop := context.WithCancel(ctx)
+	stop()
+	if _, err := p.DialContext(canceled, "udp", "dns.internal:5353"); err != context.Canceled {
+		t.Fatalf("canceled UDP dial: %v", err)
 	}
 }
 
