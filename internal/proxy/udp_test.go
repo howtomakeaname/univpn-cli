@@ -181,6 +181,107 @@ func TestUDPZeroPortAssociationPinsFirstSource(t *testing.T) {
 	}
 }
 
+func TestUDPAssociationIdleCountsOnlyValidClientPackets(t *testing.T) {
+	for _, traffic := range []string{"other-source", "malformed", "valid-client"} {
+		t.Run(traffic, func(t *testing.T) {
+			t.Parallel()
+			const idle = 400 * time.Millisecond
+			echo := startUDPEcho(t)
+			listener, err := Listen("127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			server := &Server{IdleTimeout: idle, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, echo.LocalAddr().String())
+			}}
+			go func() { done <- server.Serve(ctx, listener) }()
+			t.Cleanup(func() {
+				cancel()
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Error("idle UDP server failed to stop")
+				}
+			})
+			client, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			control, relay := startUDPAssociation(t, listener.Addr().String(), uint16(client.LocalAddr().(*net.UDPAddr).Port))
+			packet := []byte{0, 0, 0, 1, 10, 44, 0, 2, 0, 53, 'x'}
+			exchange := func() {
+				t.Helper()
+				client.SetReadDeadline(time.Now().Add(time.Second))
+				if _, err := client.WriteToUDP(packet, relay); err != nil {
+					t.Fatal(err)
+				}
+				var response [100]byte
+				n, _, err := client.ReadFromUDP(response[:])
+				if err != nil || n < 10 || !bytes.Equal(response[10:n], []byte{'x'}) {
+					t.Fatalf("valid client datagram failed: n=%d error=%v", n, err)
+				}
+			}
+			exchange()
+			closed := make(chan error, 1)
+			control.SetReadDeadline(time.Now().Add(3 * time.Second))
+			go func() { _, err := control.Read(make([]byte, 1)); closed <- err }()
+			if traffic == "valid-client" {
+				// Keep exchanging beyond the initial deadline. Every valid packet must
+				// extend the association before it can expire from client inactivity.
+				for range 6 {
+					timer := time.NewTimer(idle / 4)
+					select {
+					case err := <-closed:
+						timer.Stop()
+						t.Fatalf("active UDP association expired: %v", err)
+					case <-timer.C:
+					}
+					exchange()
+				}
+			} else {
+				sender := client
+				noise := append([]byte(nil), packet...)
+				if traffic == "other-source" {
+					sender, err = net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer sender.Close()
+				} else {
+					noise[2] = 1
+				} // Unsupported SOCKS fragment from the correct source.
+				stopNoise := make(chan struct{})
+				noiseDone := make(chan struct{})
+				defer func() { close(stopNoise); <-noiseDone }()
+				go func() {
+					defer close(noiseDone)
+					ticker := time.NewTicker(idle / 10)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-stopNoise:
+							return
+						case <-ticker.C:
+							sender.WriteToUDP(noise, relay)
+						}
+					}
+				}()
+			}
+			select {
+			case err := <-closed:
+				if !errors.Is(err, io.EOF) {
+					t.Fatalf("idle association did not close cleanly: %v", err)
+				}
+			case <-time.After(3 * idle):
+				t.Fatal("discarded traffic extended UDP association idle time")
+			}
+		})
+	}
+}
+
 func TestUDPAssociationFlowLimit(t *testing.T) {
 	echo := startUDPEcho(t)
 	var dialed atomic.Int32

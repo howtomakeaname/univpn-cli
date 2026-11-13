@@ -156,8 +156,8 @@ func (s *Server) udpAssociate(parent context.Context, control net.Conn, reader *
 		source = &net.UDPAddr{IP: net.ParseIP(peerHost), Port: int(port)}
 	}
 	packet := make([]byte, 65535)
+	relay.SetReadDeadline(time.Now().Add(idle))
 	for {
-		relay.SetReadDeadline(time.Now().Add(idle))
 		n, from, err := relay.ReadFromUDP(packet)
 		if err != nil {
 			return
@@ -174,6 +174,8 @@ func (s *Server) udpAssociate(parent context.Context, control net.Conn, reader *
 		if source == nil {
 			source = from
 		}
+		// Only valid datagrams from this association's source extend its idle time.
+		relay.SetReadDeadline(time.Now().Add(idle))
 		flow := flows[target]
 		if flow != nil {
 			select {
