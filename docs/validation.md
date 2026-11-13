@@ -16,7 +16,9 @@ private log is included here.
   byte-for-byte verification, destination allowlist and no host-DNS/direct fallback.
 - Proxies: SOCKS5 TCP and UDP, UDP source isolation, control-connection lifetime,
   resource caps and empty datagrams; HTTP body relay, removal of proxy and
-  hop-by-hop headers, pipelined data following CONNECT, loopback-only listeners.
+  hop-by-hop headers, preservation of absent or explicit User-Agent/Accept-Encoding
+  and encoded response bytes, pipelined data following CONNECT, loopback-only
+  listeners. Raw HTTP tests avoid client libraries masking default-header changes.
 - Integration: actual local TLS, MFA, both VPN channels, two gVisor stacks and eight
   concurrent HTTP CONNECT streams carrying 256 KiB each alongside 0/32/60,000-byte
   UDP round trips, including IPv4 fragmentation/reassembly. Reconnect tests perform
@@ -26,6 +28,12 @@ private log is included here.
 Linux amd64 passed `go test -race ./...` and `go vet ./...`. The release workflow
 runs native tests on Linux/macOS/Windows, then cross-builds amd64/arm64 archives.
 Successful cross-builds do not constitute live testing on all six hardware targets.
+
+The [routing-client reference](proxy-chaining.md) uses the documented mihomo
+SOCKS5 schema and the tested local proxy interfaces. No running Clash/mihomo
+instance was configured or used for an end-to-end acceptance test. See
+[traffic compatibility](traffic-compatibility.md) for payload-preservation and
+fingerprint boundaries; no paired vendor-client capture comparison was performed.
 
 ## Authorized live gateway
 
