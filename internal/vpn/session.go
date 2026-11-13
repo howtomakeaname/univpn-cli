@@ -273,7 +273,8 @@ func (s *Session) Run(parent context.Context, send func([]byte) error, recv func
 	defer s.Close()
 	stop := context.AfterFunc(ctx, s.Close)
 	defer stop()
-	errs := make(chan error, 5)
+	errs := make(chan error, 6)
+	packets := make(chan []byte, 64)
 	var wg sync.WaitGroup
 	start := func(fn func() error) { wg.Add(1); go func() { defer wg.Done(); errs <- fn() }() }
 	start(func() error {
@@ -315,9 +316,47 @@ func (s *Session) Run(parent context.Context, send func([]byte) error, recv func
 			if e != nil {
 				return e
 			}
-			payload := make([]byte, 8+len(p))
-			copy(payload[8:], p)
-			if e = s.write(false, wire.DataPacket, payload); e != nil {
+			select {
+			case packets <- p:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	})
+	start(func() error {
+		batch := make([]byte, 0, 64<<10)
+		for {
+			var p []byte
+			select {
+			case p = <-packets:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			batch = batch[:0]
+			for count := 0; ; count++ {
+				payload := make([]byte, 8+len(p))
+				copy(payload[8:], p)
+				var e error
+				batch, e = wire.AppendFrame(batch, wire.DataPacket, payload)
+				if e != nil {
+					return e
+				}
+				if count >= 31 {
+					break
+				}
+				select {
+				case p = <-packets:
+					continue
+				default:
+				}
+				break
+			}
+			// Coalesce only queued packets: interactive traffic incurs no timer delay.
+			s.dataMu.Lock()
+			s.data.SetWriteDeadline(time.Now().Add(15 * time.Second))
+			e := wire.WriteAll(s.data, batch)
+			s.dataMu.Unlock()
+			if e != nil {
 				return e
 			}
 		}

@@ -42,16 +42,27 @@ func Read(r io.Reader) (Frame, error) {
 }
 
 func Write(w io.Writer, cmd byte, payload []byte) error {
-	if len(payload) > MaxPayload {
-		return errors.New("VPN frame too large")
+	b, err := AppendFrame(nil, cmd, payload)
+	if err != nil {
+		return err
 	}
-	b := make([]byte, 8+len(payload))
 	defer clear(b)
+	return WriteAll(w, b)
+}
+
+// AppendFrame allows several complete frames to share one TLS write.
+func AppendFrame(dst []byte, cmd byte, payload []byte) ([]byte, error) {
+	if len(payload) > MaxPayload {
+		return nil, errors.New("VPN frame too large")
+	}
+	start := len(dst)
+	dst = append(dst, make([]byte, 8+len(payload))...)
+	b := dst[start:]
 	copy(b, magic[:])
 	b[4], b[5] = 1, cmd
 	binary.BigEndian.PutUint16(b[6:], uint16(len(payload)))
 	copy(b[8:], payload)
-	return WriteAll(w, b)
+	return dst, nil
 }
 
 func WriteAll(w io.Writer, b []byte) error {
