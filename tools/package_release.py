@@ -24,6 +24,10 @@ def main():
         subprocess.run(["go", "build", "-trimpath", "-ldflags", "-s -w -X main.version=" + version, "-o", str(binary), "./cmd/uvpn"], check=True)
         entries = [(binary, binary.name)]
         entries += [(Path(p), p) for p in ("README.md", "README.zh-CN.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "config.example.json")]
+        entries += [(Path(p), p) for p in (
+            "docs/protocol.md", "docs/validation.md",
+            "docs/assets/traffic-flow.png", "docs/assets/session-lifecycle.png",
+        )]
         entries += [(p, p.as_posix()) for p in sorted(Path("third_party/licenses").glob("*.txt"))]
         if goos == "windows":
             target = dist / (name + ".zip")

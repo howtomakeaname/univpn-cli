@@ -9,13 +9,19 @@ private log is included here.
   hostname rejection.
 - Protocol: fragmented frames, bounded lengths, truncated TLVs, password escaping,
   interactive MFA, expiry reminders and mandatory password changes.
-- Lifecycle: cancellation during setup, control-channel failure and worker shutdown.
+- Lifecycle: cancellation during setup, endpoint requirements refused before data
+  binding, runtime revocation/re-authentication, local duration limits, worker
+  shutdown and bounded fresh-login reconnect.
 - Networking: 16 concurrent TCP sessions with a deliberately dropped initial packet,
   byte-for-byte verification, destination allowlist and no host-DNS/direct fallback.
-- Proxies: SOCKS5, unsupported UDP rejection, HTTP body relay, removal of proxy and
+- Proxies: SOCKS5 TCP and UDP, UDP source isolation, control-connection lifetime,
+  resource caps and empty datagrams; HTTP body relay, removal of proxy and
   hop-by-hop headers, pipelined data following CONNECT, loopback-only listeners.
 - Integration: actual local TLS, MFA, both VPN channels, two gVisor stacks and eight
-  concurrent HTTP CONNECT streams carrying 256 KiB each.
+  concurrent HTTP CONNECT streams carrying 256 KiB each alongside 0/32/60,000-byte
+  UDP round trips, including IPv4 fragmentation/reassembly. Reconnect tests perform
+  two complete logins with distinct MFA codes and tokens, observe old-listener
+  cleanup during backoff and stop on final gateway revocation.
 
 Linux amd64 passed `go test -race ./...` and `go vet ./...`. The release workflow
 runs native tests on Linux/macOS/Windows, then cross-builds amd64/arm64 archives.
@@ -50,6 +56,9 @@ the single-stream bidirectional transfer. CPU time excludes the separate SSH
 processes and remote server. An earlier unbatched run had variable concurrent
 upload performance; repeated final-version measurements are reported above.
 
-Live compatibility was exercised from Linux amd64 against one gateway. Other
+Live compatibility was exercised from Linux amd64 against one gateway. UDP and
+fresh-login reconnect additions have been exercised with a local verified-TLS
+gateway simulator; the existing live tunnel was kept running for ongoing server
+work. These additions have not yet had a new live-gateway acceptance run. Other
 firmware variants, multi-hour session renewal, lossy-WAN performance, internal DNS
 interoperability and live operation on other operating systems remain unverified.
