@@ -81,6 +81,10 @@ Passwords and session tokens are not logged or exported. Unix users may set `pas
 
 UDP applications must support SOCKS5 UDP ASSOCIATE; an HTTP proxy cannot forward UDP. Keep its SOCKS TCP control connection open. Each association permits 32 destination flows, binds its client source, and expires idle resources. SOCKS fragmentation is unsupported; ordinary IPv4 fragmentation is handled inside the VPN stack.
 
+For mihomo / Clash composition, set `listen` to an unused loopback endpoint such as `127.0.0.1:10808` and use it as a SOCKS5 upstream. See the [interface and routing reference](docs/proxy-chaining.md) for domain/IP selection, DNS and routing-loop considerations. This project does not install or configure a routing client.
+
+SOCKS5 and CONNECT relay application bytes without terminating destination TLS. Ordinary HTTP preserves the client's User-Agent, encoding negotiation and encoded response body, but parses and serializes HTTP. Gateway TLS, virtual TCP/IP and timing can differ from the vendor client; no identical-fingerprint or identification guarantee is made. See [traffic compatibility](docs/traffic-compatibility.md).
+
 ## Sessions and MFA
 
 ![Session setup, resource cleanup and explicitly enabled fresh-authentication reconnect](docs/assets/session-lifecycle.png)

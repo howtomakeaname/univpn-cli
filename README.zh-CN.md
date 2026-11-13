@@ -55,6 +55,10 @@ curl --proxy http://127.0.0.1:7890 https://atlas.internal/
 
 UDP 应用需要支持 SOCKS5 UDP ASSOCIATE，并在使用期间保持其 SOCKS TCP 控制连接。每个关联绑定客户端来源，最多 32 个目的流；目的流空闲 60 秒回收，关联 5 分钟无客户端数据回收。支持完整的 SOCKS UDP 报文，不支持 SOCKS 分片；底层 IPv4 分片由网络栈重组。这是 **UDP over TLS**，不表示外层 DTLS 已实现。
 
+与 mihomo / Clash 搭配时，可把 `listen` 设为未占用的回环地址，例如 `127.0.0.1:10808`，作为其 SOCKS5 上游。按域名/IP 选择节点、DNS 与路由回环的注意事项见 [接口与规则参考](docs/proxy-chaining.md)。项目不会安装或修改用户的路由客户端配置。
+
+SOCKS5 与 CONNECT 原样转发应用字节流，不终止目标 TLS。普通 HTTP 保留客户端的 User-Agent、编码协商和编码后的响应体，但会解析并重新序列化 HTTP。网关 TLS、虚拟 TCP/IP 栈及流量时序可能与原版不同，不能保证指纹完全一致或不会被识别。具体边界见 [流量兼容说明](docs/traffic-compatibility.md)。
+
 ## 会话、重连与 MFA
 
 ![连接认证、关闭旧资源和显式启用的重新认证流程](docs/assets/session-lifecycle.png)
