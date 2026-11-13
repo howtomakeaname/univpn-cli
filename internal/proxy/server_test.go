@@ -67,7 +67,7 @@ func TestConnectPreservesPipelinedBytes(t *testing.T) {
 
 func TestSOCKS5AndUnsupportedCommands(t *testing.T) {
 	addr := startProxy(t, echoDial)
-	for _, cmd := range []byte{1, 3} {
+	for _, cmd := range []byte{1, 2} {
 		c, err := net.Dial("tcp", addr)
 		if err != nil {
 			t.Fatal(err)
@@ -82,9 +82,9 @@ func TestSOCKS5AndUnsupportedCommands(t *testing.T) {
 		c.Write([]byte{5, cmd, 0, 1, 10, 44, 0, 2, 0, 22})
 		b = make([]byte, 10)
 		io.ReadFull(c, b)
-		if cmd == 3 {
+		if cmd == 2 {
 			if b[1] != 7 {
-				t.Fatal("UDP was accepted")
+				t.Fatal("BIND was accepted")
 			}
 		} else {
 			if b[1] != 0 {

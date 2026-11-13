@@ -1,4 +1,4 @@
-// Package proxy serves SOCKS5 CONNECT and HTTP/HTTPS proxies on one loopback port.
+// Package proxy serves SOCKS5 TCP/UDP and HTTP proxies on one loopback port.
 package proxy
 
 import (
@@ -128,10 +128,10 @@ func (s *Server) socks(ctx context.Context, c net.Conn, r *bufio.Reader, idle ti
 		return
 	}
 	reply := func(code byte) { c.Write([]byte{5, code, 0, 1, 0, 0, 0, 0, 0, 0}) }
-	if req[1] != 1 {
+	if req[1] != 1 && req[1] != 3 {
 		reply(7)
 		return
-	} // No BIND or UDP ASSOCIATE.
+	} // BIND is not supported.
 	var host string
 	switch req[3] {
 	case 1:
@@ -156,6 +156,10 @@ func (s *Server) socks(ctx context.Context, c net.Conn, r *bufio.Reader, idle ti
 	}
 	var pb [2]byte
 	if _, err := io.ReadFull(r, pb[:]); err != nil {
+		return
+	}
+	if req[1] == 3 {
+		s.udpAssociate(ctx, c, r, host, binary.BigEndian.Uint16(pb[:]), idle)
 		return
 	}
 	remote, err := s.dial(ctx, net.JoinHostPort(host, strconv.Itoa(int(binary.BigEndian.Uint16(pb[:])))))
