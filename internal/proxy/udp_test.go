@@ -36,12 +36,13 @@ func startUDPAssociation(t *testing.T, proxyAddress string, sourcePort uint16) (
 	return control, &net.UDPAddr{IP: net.IP(response[4:8]), Port: int(binary.BigEndian.Uint16(response[8:]))}
 }
 
-func TestUDPAssociateDatagramsAndControlLifetime(t *testing.T) {
+func startUDPEcho(t *testing.T) *net.UDPConn {
+	t.Helper()
 	echo, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer echo.Close()
+	t.Cleanup(func() { echo.Close() })
 	go func() {
 		var buf [65535]byte
 		for {
@@ -52,6 +53,11 @@ func TestUDPAssociateDatagramsAndControlLifetime(t *testing.T) {
 			echo.WriteToUDP(buf[:n], from)
 		}
 	}()
+	return echo
+}
+
+func TestUDPAssociateDatagramsAndControlLifetime(t *testing.T) {
+	echo := startUDPEcho(t)
 	var dialed atomic.Int32
 	proxyAddress := startProxy(t, func(ctx context.Context, network, address string) (net.Conn, error) {
 		if network != "udp" || address != "dns.internal:53" {
@@ -97,8 +103,8 @@ func TestUDPAssociateDatagramsAndControlLifetime(t *testing.T) {
 		t.Fatal("datagram from another source port was relayed")
 	}
 	control.Close()
-	// Wait for the server to acknowledge control closure, then its UDP socket
-	// must be gone. No deadline-based sleeps are required to join the worker.
+	// Poll for bounded cleanup after control closure: the UDP port must become
+	// available again instead of surviving as an orphaned relay.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		probe, err := net.ListenUDP("udp4", relay)
@@ -110,6 +116,47 @@ func TestUDPAssociateDatagramsAndControlLifetime(t *testing.T) {
 			t.Fatal("UDP relay survived TCP control closure")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestUDPAssociationFlowLimit(t *testing.T) {
+	echo := startUDPEcho(t)
+	var dialed atomic.Int32
+	proxyAddress := startProxy(t, func(ctx context.Context, network, address string) (net.Conn, error) {
+		dialed.Add(1)
+		return (&net.Dialer{}).DialContext(ctx, network, echo.LocalAddr().String())
+	})
+	client, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	_, relay := startUDPAssociation(t, proxyAddress, 0)
+	send := func(port int, expectReply bool) {
+		t.Helper()
+		packet := []byte{0, 0, 0, 1, 10, 44, 0, 2}
+		packet = binary.BigEndian.AppendUint16(packet, uint16(port))
+		packet = append(packet, 'x')
+		client.SetDeadline(time.Now().Add(time.Second))
+		if !expectReply {
+			client.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		}
+		if _, err := client.WriteToUDP(packet, relay); err != nil {
+			t.Fatal(err)
+		}
+		var reply [32]byte
+		_, _, err := client.ReadFromUDP(reply[:])
+		if (err == nil) != expectReply {
+			t.Fatalf("reply=%t, expected=%t, error=%v", err == nil, expectReply, err)
+		}
+	}
+	for i := range maxUDPFlows {
+		send(10000+i, true)
+	}
+	send(20000, false)
+	send(10000, true) // Capacity rejects only the new destination.
+	if dialed.Load() != maxUDPFlows {
+		t.Fatal("association exceeded flow limit", dialed.Load())
 	}
 }
 
