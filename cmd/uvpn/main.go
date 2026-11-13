@@ -18,8 +18,6 @@ import (
 	"time"
 
 	"github.com/howtomakeaname/univpn-cli/internal/config"
-	"github.com/howtomakeaname/univpn-cli/internal/netstack"
-	"github.com/howtomakeaname/univpn-cli/internal/proxy"
 	"github.com/howtomakeaname/univpn-cli/internal/vpn"
 	"golang.org/x/term"
 )
@@ -57,11 +55,15 @@ func run() error {
 	file := fs.String("config", "uvpn.local.json", "JSON configuration")
 	passwordStdin := fs.Bool("password-stdin", false, "read VPN password from stdin (one line)")
 	otpStdin := fs.Bool("otp-stdin", false, "read requested verification code from stdin (one line)")
+	reconnectAttempts := fs.Int("reconnect-attempts", 0, "maximum fresh logins after tunnel interruption (0..10; default disabled)")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
 		return err
+	}
+	if *reconnectAttempts < 0 || *reconnectAttempts > 10 {
+		return errors.New("reconnect-attempts must be 0..10")
 	}
 	if fs.NArg() != 0 {
 		return errors.New("unexpected positional arguments")
@@ -89,60 +91,10 @@ func run() error {
 		fmt.Println("TLS identity verified; UniVPN v1 FirstConnect accepted. No credentials sent.")
 		return nil
 	}
-	// Reserve the port before authenticating, avoiding an unnecessary MFA request.
-	l, err := proxy.Listen(c.Listen)
-	if err != nil {
-		return err
-	}
-	defer l.Close()
 	input := bufio.NewReader(os.Stdin)
-	var password []byte
-	if *passwordStdin {
-		password, err = secret(ctx, "VPN password (stdin): ", input, true)
-	} else if c.PasswordFile != "" {
-		password, err = config.ReadPassword(c.PasswordFile)
-	} else {
-		password, err = secret(ctx, "VPN password: ", input, false)
-	}
-	if err != nil {
-		return err
-	}
-	defer clear(password)
-	if c.Username == "" {
-		return errors.New("username is required in configuration")
-	}
-	fmt.Fprintln(os.Stderr, "Establishing verified TLS control channel...")
-	s, err := vpn.Login(ctx, vpn.Options{TLS: c.TLS(), Domain: c.Domain, Username: c.Username, Password: password, OTP: func(ctx context.Context) ([]byte, error) {
-		fmt.Fprintln(os.Stderr, "Gateway requires the SMS/email verification code.")
-		return secret(ctx, "Verification code: ", input, *otpStdin)
-	}})
-	clear(password)
-	if err != nil {
-		return err
-	}
-	defer s.Close()
-	n, err := netstack.New(s.VIP, c.MTU)
-	if err != nil {
-		return err
-	}
-	defer n.Close()
-	policy, err := c.Policy(n)
-	if err != nil {
-		return err
-	}
-	runCtx, stop := context.WithCancel(ctx)
-	defer stop()
-	errs := make(chan error, 2)
-	go func() { errs <- s.Run(runCtx, n.Inject, n.Receive) }()
-	server := &proxy.Server{Dial: policy.DialContext, MaxConnections: c.MaxConnections}
-	go func() { errs <- server.Serve(runCtx, l) }()
-	fmt.Fprintf(os.Stderr, "READY mixed SOCKS5/HTTP proxy %s; %d allowed CIDR(s); Ctrl-C to stop.\n", l.Addr(), len(c.AllowCIDRs))
-	err = <-errs
-	stop()
-	s.Close()
-	l.Close()
-	<-errs // Join both workers before closing the TCP/IP stack.
-	return err
+	return connectLoop(ctx, *reconnectAttempts, func() error {
+		return connectOnce(ctx, c, input, *passwordStdin, *otpStdin)
+	}, waitReconnect)
 }
 
 func readLine(r *bufio.Reader) ([]byte, error) {
