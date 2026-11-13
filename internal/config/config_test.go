@@ -3,11 +3,15 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestPrivatePasswordPreservesSpaces(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions; Windows uses prompt/stdin")
+	}
 	p := filepath.Join(t.TempDir(), "password")
 	if err := os.WriteFile(p, []byte(" p&+% \r\n"), 0600); err != nil {
 		t.Fatal(err)

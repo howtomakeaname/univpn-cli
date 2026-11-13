@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -134,6 +135,9 @@ func (c Config) Policy(n *netstack.Network) (*netstack.Policy, error) {
 }
 
 func ReadPassword(path string) ([]byte, error) {
+	if runtime.GOOS == "windows" {
+		return nil, errors.New("password_file requires Unix permission checks; on Windows use the interactive prompt or --password-stdin")
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err

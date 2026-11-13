@@ -31,16 +31,23 @@ func main() {
 	}
 }
 
+var version = "dev"
+
 func run() error {
 	if len(os.Args) < 2 {
 		return errors.New("usage: uvpn <connect|probe|inspect-cert|version> -config FILE")
 	}
 	command := os.Args[1]
+	if command == "help" || command == "-h" || command == "--help" {
+		fmt.Println("usage: uvpn <connect|probe|inspect-cert|dial|version> [options]")
+		fmt.Println("Run uvpn COMMAND -h for options. connect requires a private JSON config.")
+		return nil
+	}
 	if command == "dial" {
 		return dialProxy(os.Args[2:])
 	}
 	if command == "version" {
-		fmt.Println("uvpn 0.1.0 experimental (UniVPN v1 / IPv4 / TLS)")
+		fmt.Printf("uvpn %s experimental (UniVPN v1 / IPv4 / TLS)\n", version)
 		return nil
 	}
 	if command != "connect" && command != "probe" && command != "inspect-cert" {
