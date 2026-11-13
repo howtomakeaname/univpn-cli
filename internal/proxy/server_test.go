@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -127,6 +128,71 @@ func TestHTTPBodyAndHeaderFiltering(t *testing.T) {
 	b, err := io.ReadAll(resp.Body)
 	if err != nil || string(b) != data {
 		t.Fatal("body mismatch", len(b), err)
+	}
+}
+
+func TestHTTPPreservesApplicationHeadersAndEncodedResponse(t *testing.T) {
+	var encoded bytes.Buffer
+	compressor := gzip.NewWriter(&encoded)
+	if _, err := compressor.Write([]byte("origin encoded response")); err != nil {
+		t.Fatal(err)
+	}
+	if err := compressor.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, agent, encoding string
+	}{
+		{name: "absent headers"},
+		{name: "client headers", agent: "application/1.0", encoding: "gzip, br"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("User-Agent") != tc.agent || r.Header.Get("Accept-Encoding") != tc.encoding {
+					t.Error("application agent or encoding negotiation changed")
+				}
+				if tc.agent == "" && len(r.Header.Values("User-Agent")) != 0 {
+					t.Error("proxy inserted an application User-Agent")
+				}
+				if r.Header.Get("Via") != "" || r.Header.Get("X-Forwarded-For") != "" {
+					t.Error("proxy inserted forwarding identity headers")
+				}
+				body, err := io.ReadAll(r.Body)
+				if err != nil || string(body) != "client payload" {
+					t.Error("request body changed", err)
+				}
+				w.Header().Set("Content-Encoding", "gzip")
+				w.Write(encoded.Bytes())
+			}))
+			defer origin.Close()
+			addr := startProxy(t, (&net.Dialer{}).DialContext)
+			connection, err := net.Dial("tcp", addr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer connection.Close()
+			connection.SetDeadline(time.Now().Add(3 * time.Second))
+			originURL, _ := url.Parse(origin.URL)
+			request := "POST " + origin.URL + "/resource HTTP/1.1\r\nHost: " + originURL.Host + "\r\nContent-Length: 14\r\nConnection: close\r\n"
+			if tc.agent != "" {
+				request += "User-Agent: " + tc.agent + "\r\n"
+			}
+			if tc.encoding != "" {
+				request += "Accept-Encoding: " + tc.encoding + "\r\n"
+			}
+			if _, err := io.WriteString(connection, request+"\r\nclient payload"); err != nil {
+				t.Fatal(err)
+			}
+			response, err := http.ReadResponse(bufio.NewReader(connection), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			body, err := io.ReadAll(response.Body)
+			if err != nil || response.Header.Get("Content-Encoding") != "gzip" || !bytes.Equal(body, encoded.Bytes()) {
+				t.Fatal("encoded origin response was transformed", err)
+			}
+		})
 	}
 }
 
