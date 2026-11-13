@@ -44,6 +44,9 @@ func startUDPEcho(t *testing.T) *net.UDPConn {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { echo.Close() })
+	if err := setUDPBuffers(echo); err != nil {
+		t.Fatal(err)
+	}
 	go func() {
 		var buf [65535]byte
 		for {
@@ -57,6 +60,18 @@ func startUDPEcho(t *testing.T) *net.UDPConn {
 	return echo
 }
 
+func dialUDPEcho(ctx context.Context, address string) (net.Conn, error) {
+	c, err := (&net.Dialer{}).DialContext(ctx, "udp", address)
+	if err != nil {
+		return nil, err
+	}
+	if err := setUDPBuffers(c.(*net.UDPConn)); err != nil {
+		c.Close()
+		return nil, err
+	}
+	return c, nil
+}
+
 func TestUDPAssociateDatagramsAndControlLifetime(t *testing.T) {
 	echo := startUDPEcho(t)
 	var dialed atomic.Int32
@@ -65,23 +80,26 @@ func TestUDPAssociateDatagramsAndControlLifetime(t *testing.T) {
 			t.Errorf("unexpected dial %q %q", network, address)
 		}
 		dialed.Add(1)
-		return (&net.Dialer{}).DialContext(ctx, network, echo.LocalAddr().String())
+		return dialUDPEcho(ctx, echo.LocalAddr().String())
 	})
 	client, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer client.Close()
+	if err := setUDPBuffers(client); err != nil {
+		t.Fatal(err)
+	}
 	control, relay := startUDPAssociation(t, proxyAddress, uint16(client.LocalAddr().(*net.UDPAddr).Port))
 	header := append([]byte{0, 0, 0, 3, 12}, "dns.internal"...)
 	header = append(header, 0, 53)
-	for _, size := range []int{0, 1, 8192} {
+	for _, size := range []int{0, 1, 8192, 60000} {
 		payload := bytes.Repeat([]byte{byte(size + 1)}, size)
 		client.SetDeadline(time.Now().Add(3 * time.Second))
 		if _, err := client.WriteToUDP(append(append([]byte(nil), header...), payload...), relay); err != nil {
 			t.Fatal(err)
 		}
-		buf := make([]byte, 16384)
+		buf := make([]byte, 65535)
 		n, _, e := client.ReadFromUDP(buf)
 		_, response, parseErr := parseUDPDatagram(buf[:n])
 		if e != nil || parseErr != nil || !bytes.Equal(response, payload) {
@@ -128,7 +146,7 @@ func TestUDPZeroPortAssociationPinsFirstSource(t *testing.T) {
 	var dialed atomic.Int32
 	proxyAddress := startProxy(t, func(ctx context.Context, network, address string) (net.Conn, error) {
 		dialed.Add(1)
-		return (&net.Dialer{}).DialContext(ctx, network, echo.LocalAddr().String())
+		return dialUDPEcho(ctx, echo.LocalAddr().String())
 	})
 	_, relay := startUDPAssociation(t, proxyAddress, 0)
 	client, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
@@ -194,7 +212,7 @@ func TestUDPAssociationIdleCountsOnlyValidClientPackets(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan error, 1)
 			server := &Server{IdleTimeout: idle, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, network, echo.LocalAddr().String())
+				return dialUDPEcho(ctx, echo.LocalAddr().String())
 			}}
 			go func() { done <- server.Serve(ctx, listener) }()
 			t.Cleanup(func() {
@@ -287,7 +305,7 @@ func TestUDPAssociationFlowLimit(t *testing.T) {
 	var dialed atomic.Int32
 	proxyAddress := startProxy(t, func(ctx context.Context, network, address string) (net.Conn, error) {
 		dialed.Add(1)
-		return (&net.Dialer{}).DialContext(ctx, network, echo.LocalAddr().String())
+		return dialUDPEcho(ctx, echo.LocalAddr().String())
 	})
 	client, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {

@@ -255,6 +255,13 @@ func TestTLSMFATunnelConcurrentProxy(t *testing.T) {
 			t.Fatal(e)
 		}
 		defer client.Close()
+		// Keep the large-datagram test independent of small per-socket OS defaults.
+		if e := client.SetWriteBuffer(128 << 10); e != nil {
+			t.Fatal(e)
+		}
+		if e := client.SetReadBuffer(128 << 10); e != nil {
+			t.Fatal(e)
+		}
 		for _, size := range []int{0, 32, 60000} {
 			client.SetDeadline(time.Now().Add(5 * time.Second))
 			payload := bytes.Repeat([]byte{byte(size + 1)}, size)

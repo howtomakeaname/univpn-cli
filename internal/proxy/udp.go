@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	maxUDPFlows = 32
-	udpFlowIdle = 60 * time.Second
+	maxUDPFlows     = 32
+	udpFlowIdle     = 60 * time.Second
+	udpSocketBuffer = 128 << 10
 )
 
 // parseUDPDatagram implements the unfragmented SOCKS5 UDP wire format. IP
@@ -75,6 +76,16 @@ func udpReplyHeader(addr net.Addr) ([]byte, error) {
 	return header, nil
 }
 
+// setUDPBuffers reserves room for a full UDP datagram and kernel bookkeeping.
+// Some platforms default to a send buffer smaller than a valid IPv4 datagram.
+// The request is per socket and bounded; it does not change system-wide limits.
+func setUDPBuffers(c *net.UDPConn) error {
+	if err := c.SetWriteBuffer(udpSocketBuffer); err != nil {
+		return err
+	}
+	return c.SetReadBuffer(udpSocketBuffer)
+}
+
 type udpFlow struct {
 	conn net.Conn
 	done chan struct{}
@@ -110,7 +121,13 @@ func (s *Server) udpAssociate(parent context.Context, control net.Conn, reader *
 		udpNetwork = "udp6"
 	}
 	relay, err := net.ListenUDP(udpNetwork, &net.UDPAddr{IP: localIP})
+	if err == nil {
+		err = setUDPBuffers(relay)
+	}
 	if err != nil {
+		if relay != nil {
+			relay.Close()
+		}
 		reject(1)
 		return
 	}
