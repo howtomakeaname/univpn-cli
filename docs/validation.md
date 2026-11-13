@@ -44,6 +44,12 @@ SSH through both SOCKS5 and HTTP CONNECT, and reached HTTP/HTTPS management serv
 SSH login and read-only server inspection succeeded through the built-in `dial`
 helper. The connection remained usable across idle periods and repeated tests.
 
+The downloaded v0.2.1 Linux amd64 release subsequently completed a fresh
+password/MFA login on a separately configured loopback listener. SSH login through
+SOCKS5 succeeded; ordinary HTTP received the management service's 301 response,
+and HTTP CONNECT returned the allocated host's SSH banner. This did not involve
+configuring a running third-party routing client.
+
 The v0.2.0 build subsequently completed a new live password/MFA login. SOCKS5 UDP
 round trips of 0, 32, 1200, 8192 and 60,000 bytes matched byte-for-byte. A temporary
 in-memory echo service ran on the allocated server. Its host firewall initially
@@ -67,12 +73,21 @@ comparison with the vendor client.
 | v0.1.0, four streams, run 1 | 4 × 16 MiB | 10.93 MiB/s aggregate | 12.07 MiB/s aggregate |
 | v0.1.0, four streams, run 2 | 4 × 16 MiB | 11.30 MiB/s aggregate | 12.50 MiB/s aggregate |
 | v0.2.0, one SSH stream | 64 MiB | 10.51 MiB/s | 12.23 MiB/s |
+| v0.2.1, one SSH stream, run 1 | 64 MiB | 2.94 MiB/s | 12.62 MiB/s |
+| v0.2.1, one SSH stream, run 2 | 64 MiB | 1.93 MiB/s | 7.58 MiB/s |
 
 The v0.2.0 VPN process used approximately 13.9 MiB RSS and 2.14 seconds of CPU during
 the single-stream bidirectional transfer (v0.1.0: 13.1 MiB / 1.99 seconds). CPU time
 excludes the separate SSH processes and remote server. These measurements do not
 establish a performance difference between versions. An earlier unbatched run had
 variable concurrent upload performance; the table uses batched TLS writes.
+
+Both v0.2.1 transfers passed SHA-256 checks in each direction. Its process used
+13.4 / 14.1 MiB RSS and 2.15 / 2.44 seconds of CPU across the two runs. Upload
+was lower than earlier observations, with variable download results; these runs
+do not isolate the cause or establish whether the variation is client- or
+path-related. The HTTP patch does not change the SOCKS5 data path. No vendor-client
+performance comparison was performed.
 
 The live UDP echo run sent 8192 datagrams of 1200 payload bytes with a window of 64.
 All 8192 returned intact, with zero observed loss, in 2.936 seconds: **3.193 MiB/s

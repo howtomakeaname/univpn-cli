@@ -14,9 +14,12 @@
 - Include both references in the six platform archives alongside the bilingual
   guides, diagrams, licenses and SHA256SUMS.
 
-Automated proxy tests cover HTTP headers and encoded response integrity. The
-authorized live gateway and transfer measurements in docs/validation.md were
-recorded with v0.2.0; they were not repeated for this HTTP forwarding patch.
+Automated proxy tests cover HTTP headers and encoded response integrity.
+Subsequent validation with the published v0.2.1 Linux amd64 binary repeated a fresh
+password/MFA login, SSH login, ordinary HTTP and HTTP CONNECT. Two 64 MiB transfers
+passed SHA-256 in both directions: uploads 2.94 / 1.93 MiB/s and downloads
+12.62 / 7.58 MiB/s. Rates varied and uploads were lower than earlier observations;
+the cause has not been isolated. See docs/validation.md for all recorded results.
 SOCKS5/CONNECT and VPN session behavior are unchanged. Native CI and cross-builds
 are separate from live gateway acceptance.
 
