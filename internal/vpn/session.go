@@ -21,6 +21,8 @@ type Options struct {
 	Domain, Username string
 	Password         []byte
 	OTP              func(context.Context) ([]byte, error)
+	// MaxDuration caps local session use; it does not override gateway policy.
+	MaxDuration time.Duration
 	// Dial is injectable for isolated protocol tests; CLI always uses verified TLS.
 	Dial func(context.Context) (net.Conn, error)
 }
@@ -32,6 +34,7 @@ type Session struct {
 	token             [32]byte
 	VIP               netip.Addr
 	started           time.Time
+	maxDuration       time.Duration
 }
 
 // Hello does not authenticate or send credentials.
@@ -69,7 +72,10 @@ func Login(ctx context.Context, o Options) (_ *Session, err error) {
 	if dial == nil {
 		dial = func(ctx context.Context) (net.Conn, error) { return DialTLS(ctx, o.TLS) }
 	}
-	s := &Session{started: time.Now()}
+	if o.MaxDuration < 0 {
+		return nil, errors.New("session maximum duration cannot be negative")
+	}
+	s := &Session{started: time.Now(), maxDuration: o.MaxDuration}
 	defer func() {
 		if err != nil {
 			s.Close()
@@ -194,6 +200,7 @@ func Login(ctx context.Context, o Options) (_ *Session, err error) {
 	}
 	s.control.SetDeadline(time.Time{})
 	s.data.SetDeadline(time.Time{})
+	s.started = time.Now()
 	return s, nil
 }
 
@@ -222,9 +229,13 @@ func parseAuth(p []byte) (uint32, []byte, bool, error) {
 	if status > 1 {
 		return status, nil, false, nil
 	}
-	// Endpoint checks and non-password authentication need a separate implementation.
-	if p[4] != 0 || p[5] != 0 {
-		return 0, nil, false, errors.New("gateway requires unsupported authentication/endpoint checks")
+	// The low nibble requests endpoint checks and the high nibble selects their mode.
+	// Never report a successful health check without executing the required policy.
+	if p[5] != 0 {
+		return 0, nil, false, &EndpointRequirement{Check: p[5] & 15, Mode: p[5] >> 4}
+	}
+	if p[4] != 0 {
+		return 0, nil, false, errors.New("gateway requires unsupported authentication result flags; use the official client")
 	}
 	tlvs, err := wire.ParseTLVs(p[8:])
 	if err != nil {
@@ -269,6 +280,12 @@ func (s *Session) Close() {
 // recv/send must honor ctx; all queues downstream are bounded.
 func (s *Session) Run(parent context.Context, send func([]byte) error, recv func(context.Context) ([]byte, error)) error {
 	ctx, cancel := context.WithCancel(parent)
+	var lifetime <-chan time.Time
+	if s.maxDuration > 0 {
+		timer := time.NewTimer(time.Until(s.started.Add(s.maxDuration)))
+		defer timer.Stop()
+		lifetime = timer.C
+	}
 	defer cancel()
 	defer s.Close()
 	stop := context.AfterFunc(ctx, s.Close)
@@ -282,9 +299,15 @@ func (s *Session) Run(parent context.Context, send func([]byte) error, recv func
 			s.control.SetReadDeadline(time.Now().Add(60 * time.Second))
 			f, e := wire.Read(s.control)
 			if e != nil {
-				return fmt.Errorf("control channel: %w", e)
+				return &ChannelError{Channel: "control", Err: e}
 			}
-			if f.Command != wire.Keepalive {
+			switch f.Command {
+			case wire.Keepalive:
+			case wire.SecondAuth:
+				return ErrReauthenticationRequired
+			case commandKickout:
+				return ErrSessionRevoked
+			default:
 				return fmt.Errorf("unexpected control command 0x%02x", f.Command)
 			}
 		}
@@ -294,7 +317,7 @@ func (s *Session) Run(parent context.Context, send func([]byte) error, recv func
 			s.data.SetReadDeadline(time.Now().Add(60 * time.Second))
 			f, e := wire.Read(s.data)
 			if e != nil {
-				return fmt.Errorf("data channel: %w", e)
+				return &ChannelError{Channel: "data", Err: e}
 			}
 			switch f.Command {
 			case wire.DataAlive:
@@ -357,7 +380,7 @@ func (s *Session) Run(parent context.Context, send func([]byte) error, recv func
 			e := wire.WriteAll(s.data, batch)
 			s.dataMu.Unlock()
 			if e != nil {
-				return e
+				return &ChannelError{Channel: "data", Err: e}
 			}
 		}
 	})
@@ -367,6 +390,8 @@ func (s *Session) Run(parent context.Context, send func([]byte) error, recv func
 	select {
 	case <-parent.Done():
 		err = parent.Err()
+	case <-lifetime:
+		err = ErrSessionLimit
 	case err = <-errs:
 	}
 	cancel()
@@ -403,7 +428,11 @@ func (s *Session) heartbeat(ctx context.Context, control bool, interval time.Dur
 				binary.BigEndian.PutUint32(p[32:], uint32(time.Since(s.started).Milliseconds()))
 			}
 			if err := s.write(control, cmd, p); err != nil {
-				return err
+				channel := "data"
+				if control {
+					channel = "control"
+				}
+				return &ChannelError{Channel: channel, Err: err}
 			}
 		}
 	}
