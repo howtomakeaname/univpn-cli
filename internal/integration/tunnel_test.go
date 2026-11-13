@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -26,7 +27,7 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
 )
 
-// Exercise real TLS, two VPN channels, MFA, both IP stacks, and HTTP CONNECT.
+// Exercise real TLS, two VPN channels, MFA, both IP stacks, and TCP/UDP proxies.
 func TestTLSMFATunnelConcurrentProxy(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -50,6 +51,21 @@ func TestTLSMFATunnelConcurrentProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer echo.Close()
+	udpEcho, err := gonet.DialUDP(remote.Stack, &tcpip.FullAddress{NIC: 1, Addr: tcpip.AddrFromSlice(remote.IP.AsSlice()), Port: 5353}, nil, ipv4.ProtocolNumber)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer udpEcho.Close()
+	go func() {
+		var buf [65535]byte
+		for {
+			n, addr, e := udpEcho.ReadFrom(buf[:])
+			if e != nil {
+				return
+			}
+			udpEcho.WriteTo(buf[:n], addr)
+		}
+	}()
 	go func() {
 		for {
 			c, e := echo.Accept()
@@ -216,5 +232,44 @@ func TestTLSMFATunnelConcurrentProxy(t *testing.T) {
 			}
 		}(i)
 	}
+	t.Run("SOCKS5UDP", func(t *testing.T) {
+		control, e := net.Dial("tcp", pl.Addr().String())
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer control.Close()
+		control.SetDeadline(time.Now().Add(5 * time.Second))
+		control.Write([]byte{5, 1, 0})
+		var greeting [2]byte
+		if _, e := io.ReadFull(control, greeting[:]); e != nil || greeting != [2]byte{5, 0} {
+			t.Fatal(greeting, e)
+		}
+		control.Write([]byte{5, 3, 0, 1, 0, 0, 0, 0, 0, 0})
+		var reply [10]byte
+		if _, e := io.ReadFull(control, reply[:]); e != nil || reply[1] != 0 || reply[3] != 1 {
+			t.Fatal(reply, e)
+		}
+		relay := &net.UDPAddr{IP: net.IP(reply[4:8]), Port: int(binary.BigEndian.Uint16(reply[8:]))}
+		client, e := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer client.Close()
+		for _, size := range []int{0, 32, 60000} {
+			client.SetDeadline(time.Now().Add(5 * time.Second))
+			payload := bytes.Repeat([]byte{byte(size + 1)}, size)
+			packet := append([]byte{0, 0, 0, 3, 14}, "atlas.internal"...)
+			packet = binary.BigEndian.AppendUint16(packet, 5353)
+			packet = append(packet, payload...)
+			if _, e := client.WriteToUDP(packet, relay); e != nil {
+				t.Fatal(e)
+			}
+			response := make([]byte, 65535)
+			n, _, e := client.ReadFromUDP(response)
+			if e != nil || n < 10 || response[3] != 1 || !bytes.Equal(response[4:8], []byte{10, 44, 0, 2}) || binary.BigEndian.Uint16(response[8:10]) != 5353 || !bytes.Equal(response[10:n], payload) {
+				t.Fatalf("VPN UDP round trip (%d bytes): received %d, error %v", size, n, e)
+			}
+		}
+	})
 	clients.Wait()
 }
