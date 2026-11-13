@@ -14,10 +14,13 @@
   to Linux/macOS/Windows amd64 and arm64 archives, with licenses and SHA256SUMS.
 
 An authorized live gateway, SSH login and bidirectional integrity-checked
-transfers were exercised from Linux amd64 for the original TLS/TCP path. New UDP
-and reconnect behavior is covered by local TLS/MFA gateway integration tests,
-including concurrent TCP/UDP, 60 KB datagrams and two independent MFA logins.
-Native CI and cross-builds are separate from live gateway acceptance.
+transfers were exercised from Linux amd64. The v0.2.0 live run verified 0–60 KB UDP
+round trips and 8192 intact 1200-byte echoes, zero observed loss, at 3.193 MiB/s echo
+payload goodput. A 64 MiB SSH transfer measured 10.51 MiB/s upload / 12.23 MiB/s
+download with SHA-256 checks. Temporary test firewall rules/services were removed.
+Local TLS/MFA integration tests additionally cover two independent MFA logins and
+UDP isolation across reconnect. Native CI and cross-builds are separate from live
+gateway acceptance; results are observations rather than throughput guarantees.
 
 Outer encrypted UDP/DTLS tunnels, legacy HTTP-authenticated VPN sessions, IPv6,
 IPsec, endpoint security plugins, browser SSO, token-refresh/remember-device flows

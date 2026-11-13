@@ -36,6 +36,14 @@ SSH through both SOCKS5 and HTTP CONNECT, and reached HTTP/HTTPS management serv
 SSH login and read-only server inspection succeeded through the built-in `dial`
 helper. The connection remained usable across idle periods and repeated tests.
 
+The v0.2.0 build subsequently completed a new live password/MFA login. SOCKS5 UDP
+round trips of 0, 32, 1200, 8192 and 60,000 bytes matched byte-for-byte. A temporary
+in-memory echo service ran on the allocated server. Its host firewall initially
+rejected the test port; a runtime-only rule limited to the observed client `/32`
+and that single ephemeral UDP port enabled the test. The rule had a 120-second
+expiry, was explicitly removed in cleanup, and the rule set was verified unchanged.
+The echo service and diagnostic processes were also stopped.
+
 ## Transfer performance
 
 Path: SSH → loopback SOCKS5 → gVisor IPv4/TCP → UniVPN v1 TLS → allocated host.
@@ -45,20 +53,27 @@ authentication, with SHA-256 verified in both directions. These are link-level
 observations including SSH overhead, not a general performance guarantee or a
 comparison with the vendor client.
 
-| Final implementation | Payload per direction | Upload | Download |
+| Version / test | Payload per direction | Upload | Download |
 | --- | --- | --- | --- |
-| One SSH stream | 64 MiB | 11.11 MiB/s | 13.08 MiB/s |
-| Four simultaneous streams, run 1 | 4 × 16 MiB | 10.93 MiB/s aggregate | 12.07 MiB/s aggregate |
-| Four simultaneous streams, run 2 | 4 × 16 MiB | 11.30 MiB/s aggregate | 12.50 MiB/s aggregate |
+| v0.1.0, one SSH stream | 64 MiB | 11.11 MiB/s | 13.08 MiB/s |
+| v0.1.0, four streams, run 1 | 4 × 16 MiB | 10.93 MiB/s aggregate | 12.07 MiB/s aggregate |
+| v0.1.0, four streams, run 2 | 4 × 16 MiB | 11.30 MiB/s aggregate | 12.50 MiB/s aggregate |
+| v0.2.0, one SSH stream | 64 MiB | 10.51 MiB/s | 12.23 MiB/s |
 
-The VPN process used approximately 13.1 MiB RSS and 1.99 seconds of CPU during
-the single-stream bidirectional transfer. CPU time excludes the separate SSH
-processes and remote server. An earlier unbatched run had variable concurrent
-upload performance; repeated final-version measurements are reported above.
+The v0.2.0 VPN process used approximately 13.9 MiB RSS and 2.14 seconds of CPU during
+the single-stream bidirectional transfer (v0.1.0: 13.1 MiB / 1.99 seconds). CPU time
+excludes the separate SSH processes and remote server. These measurements do not
+establish a performance difference between versions. An earlier unbatched run had
+variable concurrent upload performance; the table uses batched TLS writes.
 
-Live compatibility was exercised from Linux amd64 against one gateway. UDP and
-fresh-login reconnect additions have been exercised with a local verified-TLS
-gateway simulator; the existing live tunnel was kept running for ongoing server
-work. These additions have not yet had a new live-gateway acceptance run. Other
+The live UDP echo run sent 8192 datagrams of 1200 payload bytes with a window of 64.
+All 8192 returned intact, with zero observed loss, in 2.936 seconds: **3.193 MiB/s
+echo payload goodput**. This counts each returned payload once, includes round-trip
+and echo overhead, and is not a maximum link-throughput result or directly
+comparable to the SSH stream measurements.
+
+Live compatibility was exercised from Linux amd64 against one gateway. Automatic
+fresh-login reconnect has been exercised with a local verified-TLS gateway
+simulator; a forced live reconnect/MFA cycle has not been separately exercised. Other
 firmware variants, multi-hour session renewal, lossy-WAN performance, internal DNS
 interoperability and live operation on other operating systems remain unverified.
