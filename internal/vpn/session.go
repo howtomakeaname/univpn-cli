@@ -79,6 +79,7 @@ func Login(ctx context.Context, o Options) (_ *Session, err error) {
 	defer func() {
 		if err != nil {
 			s.Close()
+			clear(s.token[:])
 		}
 	}()
 	s.control, err = dial(ctx)
@@ -427,7 +428,9 @@ func (s *Session) heartbeat(ctx context.Context, control bool, interval time.Dur
 				copy(p, s.token[:])
 				binary.BigEndian.PutUint32(p[32:], uint32(time.Since(s.started).Milliseconds()))
 			}
-			if err := s.write(control, cmd, p); err != nil {
+			err := s.write(control, cmd, p)
+			clear(p)
+			if err != nil {
 				channel := "data"
 				if control {
 					channel = "control"
