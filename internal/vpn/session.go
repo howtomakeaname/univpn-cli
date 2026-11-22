@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -20,6 +21,7 @@ type Options struct {
 	TLS              TLSOptions
 	Domain, Username string
 	Password         []byte
+	MAC              string
 	OTP              func(context.Context) ([]byte, error)
 	// MaxDuration caps local session use; it does not override gateway policy.
 	MaxDuration time.Duration
@@ -75,6 +77,17 @@ func Login(ctx context.Context, o Options) (_ *Session, err error) {
 	if o.MaxDuration < 0 {
 		return nil, errors.New("session maximum duration cannot be negative")
 	}
+	var mac string
+	if o.MAC != "" {
+		mac, err = NormalizeMAC(o.MAC)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		h := sha256.Sum256([]byte(o.Username + "|" + o.TLS.Gateway))
+		h[0] = (h[0] | 2) & 0xfe
+		mac = formatMAC([6]byte(h[:6]))
+	}
 	s := &Session{started: time.Now(), maxDuration: o.MaxDuration}
 	defer func() {
 		if err != nil {
@@ -98,9 +111,6 @@ func Login(ctx context.Context, o Options) (_ *Session, err error) {
 	auth := append(domain, 0, 0, 0, 0)
 	auth = wire.AppendTLV(auth, 1, append(u, 0))
 	auth = wire.AppendTLV(auth, 2, append(pw, 0))
-	h := sha256.Sum256([]byte(o.Username + "|" + o.TLS.Gateway))
-	h[0] = (h[0] | 2) & 0xfe
-	mac := fmt.Sprintf("%02X%02X-%02X%02X-%02X%02X", h[0], h[1], h[2], h[3], h[4], h[5])
 	auth = wire.AppendTLV(auth, 3, []byte(mac))
 	err = wire.Write(s.control, wire.Auth, auth)
 	clear(auth)
@@ -203,6 +213,48 @@ func Login(ctx context.Context, o Options) (_ *Session, err error) {
 	s.data.SetDeadline(time.Time{})
 	s.started = time.Now()
 	return s, nil
+}
+
+// NormalizeMAC validates a 6-octet unicast MAC address in colon, hyphen, or
+// 4-hex-group form and formats it for UniVPN TLV 3 (XXXX-XXXX-XXXX).
+func NormalizeMAC(s string) (string, error) {
+	var raw [12]byte
+	switch len(s) {
+	case 17: // xx:xx:xx:xx:xx:xx or xx-xx-xx-xx-xx-xx
+		sep := s[2]
+		if sep != ':' && sep != '-' {
+			return "", errors.New("mac must be a 6-octet unicast MAC address")
+		}
+		for i := range 6 {
+			if i > 0 && s[i*3-1] != sep {
+				return "", errors.New("mac must be a 6-octet unicast MAC address")
+			}
+			raw[i*2] = s[i*3]
+			raw[i*2+1] = s[i*3+1]
+		}
+	case 14: // xxxx-xxxx-xxxx or xxxx.xxxx.xxxx
+		sep := s[4]
+		if (sep != '-' && sep != '.') || s[9] != sep {
+			return "", errors.New("mac must be a 6-octet unicast MAC address")
+		}
+		copy(raw[0:4], s[0:4])
+		copy(raw[4:8], s[5:9])
+		copy(raw[8:12], s[10:14])
+	default:
+		return "", errors.New("mac must be a 6-octet unicast MAC address")
+	}
+	var b [6]byte
+	if _, err := hex.Decode(b[:], raw[:]); err != nil {
+		return "", errors.New("mac must be a 6-octet unicast MAC address")
+	}
+	if b == [6]byte{} || b[0]&1 != 0 {
+		return "", errors.New("mac must be a non-zero unicast 6-octet MAC address")
+	}
+	return formatMAC(b), nil
+}
+
+func formatMAC(b [6]byte) string {
+	return fmt.Sprintf("%02X%02X-%02X%02X-%02X%02X", b[0], b[1], b[2], b[3], b[4], b[5])
 }
 
 func escape(b []byte) []byte {

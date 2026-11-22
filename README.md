@@ -65,6 +65,8 @@ uvpn probe -config uvpn.local.json
 
 `probe` checks TLS and protocol setup without submitting credentials. Relative file paths resolve from the configuration directory.
 
+By default, `uvpn` derives a deterministic locally-administered unicast MAC address from the username and gateway. For gateways that enforce a registered client MAC address, set the optional `mac` field in the JSON config (6-octet unicast formats such as `02:11:22:33:44:55`, `02-11-22-33-44-55`, `0211-2233-4455`, or `0211.2233.4455`).
+
 ## Use the proxy
 
 ```sh
