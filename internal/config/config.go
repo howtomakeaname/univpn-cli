@@ -23,6 +23,7 @@ type Config struct {
 	Domain            string            `json:"domain,omitempty"`
 	Username          string            `json:"username,omitempty"`
 	PasswordFile      string            `json:"password_file,omitempty"`
+	MAC               string            `json:"mac,omitempty"`
 	ServerName        string            `json:"server_name,omitempty"`
 	CAFile            string            `json:"ca_file,omitempty"`
 	CertSHA256        string            `json:"cert_sha256,omitempty"`
@@ -78,6 +79,11 @@ func Load(path string) (Config, error) {
 	}
 	if _, err = wire.Domain(c.Domain); err != nil {
 		return c, err
+	}
+	if c.MAC != "" {
+		if c.MAC, err = vpn.NormalizeMAC(c.MAC); err != nil {
+			return c, err
+		}
 	}
 	host, _, err = net.SplitHostPort(c.Listen)
 	ip, e := netip.ParseAddr(host)

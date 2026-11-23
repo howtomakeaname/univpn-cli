@@ -39,7 +39,7 @@ func connectOnce(ctx context.Context, c config.Config, input *bufio.Reader, pass
 		return errors.New("username is required in configuration")
 	}
 	fmt.Fprintln(os.Stderr, "Establishing verified TLS control channel...")
-	s, err := vpn.Login(ctx, vpn.Options{TLS: c.TLS(), Domain: c.Domain, Username: c.Username, Password: password, MaxDuration: time.Duration(c.SessionMaxSeconds) * time.Second, OTP: func(ctx context.Context) ([]byte, error) {
+	s, err := vpn.Login(ctx, vpn.Options{TLS: c.TLS(), Domain: c.Domain, Username: c.Username, Password: password, MAC: c.MAC, MaxDuration: time.Duration(c.SessionMaxSeconds) * time.Second, OTP: func(ctx context.Context) ([]byte, error) {
 		fmt.Fprintln(os.Stderr, "Gateway requires the SMS/email verification code.")
 		return secret(ctx, "Verification code: ", input, otpStdin)
 	}})

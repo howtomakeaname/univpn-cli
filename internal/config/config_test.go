@@ -54,3 +54,49 @@ func TestConfigValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigMACValidation(t *testing.T) {
+	base := `{"gateway":"vpn.example.com:443","listen":"127.0.0.1:7890","allow_cidrs":["10.44.0.2/32"]}`
+	for _, tc := range []struct {
+		name, raw, want string
+		ok              bool
+	}{
+		{"omitted", "", "", true},
+		{"hyphen octets", "02-11-22-33-44-55", "0211-2233-4455", true},
+		{"colon octets", "02:11:22:33:44:55", "0211-2233-4455", true},
+		{"hyphen groups", "0211-2233-4455", "0211-2233-4455", true},
+		{"dot groups", "0211.2233.4455", "0211-2233-4455", true},
+		{"mixed case", "02-aB-cD-33-44-eF", "02AB-CD33-44EF", true},
+		{"global unicast", "00:11:22:33:44:55", "0011-2233-4455", true},
+		{"too short", "02:11:22:33:44", "", false},
+		{"too long", "02:11:22:33:44:55:66:77", "", false},
+		{"non-hex", "02:11:22:33:44:gg", "", false},
+		{"mixed separators", "02:11-22:33:44:55", "", false},
+		{"mixed group separators", "0211-2233.4455", "", false},
+		{"leading whitespace", " 02:11:22:33:44:55", "", false},
+		{"trailing whitespace", "02:11:22:33:44:55 ", "", false},
+		{"all-zero", "00:00:00:00:00:00", "", false},
+		{"broadcast", "ff:ff:ff:ff:ff:ff", "", false},
+		{"multicast", "01:00:5e:00:00:01", "", false},
+		{"nul byte", `02:11:22:33:44:55\u0000`, "", false},
+		{"control char", `02:11:22:33:44:\n5`, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text := base
+			if tc.raw != "" {
+				text = strings.Replace(base, `"gateway"`, `"mac":"`+tc.raw+`","gateway"`, 1)
+			}
+			p := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(p, []byte(text), 0600); err != nil {
+				t.Fatal(err)
+			}
+			c, err := Load(p)
+			if (err == nil) != tc.ok {
+				t.Fatalf("mac=%q expected ok=%v, err=%v", tc.raw, tc.ok, err)
+			}
+			if tc.ok && c.MAC != tc.want {
+				t.Fatalf("mac=%q got %q, want %q", tc.raw, c.MAC, tc.want)
+			}
+		})
+	}
+}
